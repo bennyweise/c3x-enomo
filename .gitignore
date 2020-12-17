@@ -4,3 +4,6 @@ venv
 enomo.egg-info
 .hypothesis
 .eggs
+.direnv
+.vscode
+c3x_enomo.egg-info

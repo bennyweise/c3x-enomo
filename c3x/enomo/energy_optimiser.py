@@ -178,7 +178,10 @@ class EnergyOptimiser(object):
         # The local energy consumption
         self.model.system_demand = en.Param(self.model.Time, initialize=self.system_demand_dct)
         # The local energy generation
-        self.model.system_generation = en.Param(self.model.Time, initialize=self.system_generation_dct)
+        self.model.system_generation_max = en.Param(self.model.Time, initialize=self.system_generation_dct)
+        self.model.system_generation = en.Var(self.model.Time, initialize=self.system_generation_dct)
+        
+        self.model.export_limit = en.Param(initialize=self.energy_system.export_limit)
 
 
     def apply_constraints(self):
@@ -374,6 +377,7 @@ class BTMEnergyOptimiser(EnergyOptimiser):
 
         # Net export to the grid
         self.model.btm_net_export = en.Var(self.model.Time, initialize=self.system_generation_dct)
+        
         # The import tariff per kWh
         self.model.btm_import_tariff = en.Param(self.model.Time, initialize=self.energy_system.tariff.import_tariff)
         # The export tariff per kWh
@@ -382,7 +386,7 @@ class BTMEnergyOptimiser(EnergyOptimiser):
         #### BTM Connection Point Peak Power ####
 
         self.model.peak_connection_point_import_power = en.Var(within=en.NonNegativeReals)
-        self.model.peak_connection_point_export_power = en.Var(within=en.NonNegativeReals)
+        self.model.peak_connection_point_export_power = en.Var(within=en.NonNegativeReals, bounds=(None, self.energy_system.export_limit))
 
         def peak_connection_point_import(model, interval):
             return model.peak_connection_point_import_power >= model.btm_net_import[interval]
@@ -390,10 +394,23 @@ class BTMEnergyOptimiser(EnergyOptimiser):
         def peak_connection_point_export(model, interval):
             return model.peak_connection_point_export_power >= -model.btm_net_export[interval]
 
+        
+
         self.model.peak_connection_point_import_constraint = en.Constraint(self.model.Time,
                                                                            rule=peak_connection_point_import)
         self.model.peak_connection_point_export_constraint = en.Constraint(self.model.Time,
                                                                            rule=peak_connection_point_export)
+
+        def connection_point_export_curtailment(model, interval):
+            """
+            Allows generally for generation to be curtailed in order to maximise the objective.
+            It is assumed that the supplied system_generation_max
+            """
+            return model.system_generation[interval] >= model.system_generation_max[interval]
+        
+        self.model.system_generation_curtailment_constraint = en.Constraint(self.model.Time,
+            rule=connection_point_export_curtailment
+        )
 
         #### Piecewise Linear Segments (To be fully implemented later) ####
         '''if self.use_piecewise_segments:

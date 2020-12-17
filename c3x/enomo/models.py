@@ -410,12 +410,18 @@ class EnergySystem:
         inverter: An instance of `Inverter`
         generation: An instance of a `Generation` system
         is_hybrid: Whether the inverter/generation/storage system is configured in a hybrid setup
+        export_limit: Power limit on export. Defaults to None
     """
 
     energy_storage: EnergyStorage = None
     inverter: Inverter = None
     generation: Generation = None
     is_hybrid: bool = False
+    export_limit: float = None
+    tariff: Tariff = None
+    dispatch: DispatchRequest = None
+    demand: Demand = None
+    generation: Generation = None
 
     def add_energy_storage(self, energy_storage):
         self.energy_storage = energy_storage

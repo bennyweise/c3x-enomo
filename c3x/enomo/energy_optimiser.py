@@ -63,8 +63,6 @@ class OptimiserObjectiveSet(object):
 
     LocalPeakOptimisation = [OptimiserObjective.LocalGridPeakPower]
 
-# Define some useful constants
-minutes_per_hour = 60.0
 
 ####################################################################
 
@@ -522,9 +520,11 @@ class BTMEnergyOptimiser(EnergyOptimiser):
                     model.storage_charge_total[time_interval] / model.eta_chg 
                     + model.storage_discharge_total[time_interval] * model.eta_dischg
                 ) * minutes_per_hour / self.interval_duration
+                fcas_energy_required_per_bid_unit = (fcas_total_duration / minutes_per_hour) / self.model.eta_dischg
                 return model.fcas_discharge_power[time_interval] >= (
-                        -self.model.storage_state_of_charge[time_interval] * self.model.eta_dischg 
-                        / (fcas_total_duration / minutes_per_hour) - allocated_energy
+                        -self.model.storage_state_of_charge[time_interval] / (fcas_energy_required_per_bid_unit)
+                        -allocated_energy
+                        # / (fcas_total_duration / minutes_per_hour) - allocated_energy
                     )
 
             def fcas_max_power_raise_rule_three(model, time_interval):

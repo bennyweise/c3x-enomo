@@ -589,6 +589,29 @@ class LocalEnergyOptimiser(EnergyOptimiser):
         self.model.local_peak_connection_point_export_constraint = en.Constraint(self.model.Time,
                                                                            rule=local_peak_connection_point_export)
 
+        """
+        TODO For reasons I do not understand, the curtailment export constraint with >= inequality
+        causes the solver to fail with a `'c_u_x1636_' is not convex` error. This is only a problem
+        with the local optimiser.
+
+        I have not investigated fully, but it may be due to differences in constraints or objectives
+        compared to the BTM model.
+
+        The current hack is to enforce equality between system_generation and system_generation_max.
+        This has not been tested with an actual `export_limit` applied, presumably this would fail to solve.
+
+        """
+        def connection_point_export_curtailment(model, interval):
+            """
+            Allows generally for generation to be curtailed in order to maximise the objective.
+            It is assumed that the supplied system_generation_max
+            """
+            return model.system_generation[interval] == model.system_generation_max[interval]
+        
+        self.model.system_generation_curtailment_constraint = en.Constraint(self.model.Time,
+            rule=connection_point_export_curtailment
+        )                                                                           
+
     def update_apply_constraints(self):
 
         # Calculate the customer net energy import

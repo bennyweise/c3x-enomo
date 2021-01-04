@@ -37,7 +37,7 @@ def test_system_charges_to_bid_into_fcas_raise():
     )
 
     optimiser = BTMEnergyOptimiser(
-        30, N_INTERVALS, energy_system, OptimiserObjectiveSet.FCASOptimisation, 
+        30, N_INTERVALS, energy_system, [OptimiserObjective.CapacityAvailability] ,
     )
     df = optimiser.result_df()
 
@@ -68,6 +68,7 @@ def test_fcas_raise_bids_respect_export_limit():
     of enforcing the export limit. (It may also just be a problem with the FCAS constraints,
     they have not been well tested by any stretch)
     """
+    n_intervals = 5
     battery = EnergyStorage(
         max_capacity=4.0,
         depth_of_discharge_limit=0,
@@ -78,30 +79,31 @@ def test_fcas_raise_bids_respect_export_limit():
         throughput_cost=5.0,
     )
     tariff = Tariff(
-        import_tariff=dict(enumerate([1.0] * 48)),
-        export_tariff=dict(enumerate([0.5] * 48))
+        import_tariff=dict(enumerate([1.0] * n_intervals)),
+        export_tariff=dict(enumerate([0.5] * n_intervals))
     )
     fcas_prices = CapacityPrices(
-        charge_prices=dict(enumerate([0.0] * 48)),
-        discharge_prices=dict(enumerate([1.0] * 48)),
+        charge_prices=dict(enumerate([0.0] * n_intervals)),
+        discharge_prices=dict(enumerate([1.0] * n_intervals)),
     )
+    export_limit = 2.0
     energy_system = EnergySystem(energy_storage=battery, 
-        export_limit=1.0,
+        export_limit=export_limit,
         tariff=tariff,
-        generation=Generation(np.array([0.0] * 48)),
-        demand=Demand(np.array([0.0] * 48)),
+        generation=Generation(np.array([0.0] * n_intervals)),
+        demand=Demand(np.array([0.0] * n_intervals)),
         capacity_prices=fcas_prices,
     )
 
     optimiser = BTMEnergyOptimiser(
-        30, N_INTERVALS, energy_system, OptimiserObjectiveSet.FCASOptimisation, 
+        30, n_intervals, energy_system, [OptimiserObjective.CapacityAvailability, OptimiserObjective.ThroughputCost],
     )
     df = optimiser.result_df()
 
     
     # Check we charge in the first interval
-    np.testing.assert_array_almost_equal(df.storage_charge_total.values, np.array([0.5 / 3.0] + [0.0] * 47))
+    np.testing.assert_array_almost_equal(df.storage_charge_total.values, np.array([min(export_limit, 2.0) * 0.5 / 3.0] + [0.0] * (n_intervals - 1)))
 
     # We can bid a little extra into the first period
-    np.testing.assert_array_almost_equal(df.fcas_discharge_power.values, np.array([-1.0 - 1.0 / 3.0] + [-1.0] * 47))
+    np.testing.assert_array_almost_equal(df.fcas_discharge_power.values, np.array([-1.0 - 1.0 / 3.0] + [-1.0] * (n_intervals - 1)) * min(export_limit, 2.0))
     

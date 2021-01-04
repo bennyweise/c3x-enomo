@@ -535,7 +535,10 @@ class BTMEnergyOptimiser(EnergyOptimiser):
 
             def fcas_max_power_raise_export_limit(model, time_interval):
                 # Ensure that the capacity allocated to FCAS won't exceed the site export limit
-                return -model.fcas_discharge_power[time_interval] - self.model.system_generation[time_interval] - model.storage_charge_total[time_interval] - model.storage_discharge_total[time_interval] <= self.model.export_limit
+                power_conversion = minutes_per_hour / self.interval_duration
+
+                excess_charge_power = (self.model.system_generation[time_interval] + model.storage_charge_total[time_interval] + model.storage_discharge_total[time_interval]) * power_conversion
+                return -model.fcas_discharge_power[time_interval] - excess_charge_power <= self.model.export_limit
                 
 
             self.model.fcas_max_power_raise_rule_one_constraint = en.Constraint(self.model.Time,

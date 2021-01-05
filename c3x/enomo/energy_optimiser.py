@@ -5,6 +5,14 @@ import numpy as np
 
 ####################################################################
 
+# Define some useful constants
+minutes_per_hour = 60.0
+fcas_6s_duration = 1.0
+fcas_60s_duration = 4.0
+fcas_5m_duration = 5.0
+fcas_total_duration = fcas_6s_duration + fcas_60s_duration + fcas_5m_duration
+
+
 # Define some useful container objects to define the optimisation objectives
 
 class OptimiserObjective(object):
@@ -22,12 +30,17 @@ class OptimiserObjective(object):
     LocalGridMinimiser = 12
     LocalThirdParty = 13
     LocalGridPeakPower = 14
+
+    CapacityAvailability = 15
     
 class OptimiserObjectiveSet(object):
     FinancialOptimisation = [OptimiserObjective.ConnectionPointCost,
                              #OptimiserObjective.GreedyGenerationCharging,
                              OptimiserObjective.ThroughputCost,
-                             OptimiserObjective.EqualStorageActions]
+                             OptimiserObjective.EqualStorageActions
+                             ]
+
+    FCASOptimisation = FinancialOptimisation + [OptimiserObjective.CapacityAvailability]                             
 
     EnergyOptimisation = [OptimiserObjective.ConnectionPointEnergy,
                           OptimiserObjective.GreedyGenerationCharging,
@@ -51,8 +64,6 @@ class OptimiserObjectiveSet(object):
 
     LocalPeakOptimisation = [OptimiserObjective.LocalGridPeakPower]
 
-# Define some useful constants
-minutes_per_hour = 60.0
 
 ####################################################################
 
@@ -481,6 +492,117 @@ class BTMEnergyOptimiser(EnergyOptimiser):
         self.model.btm_net_import_constraint = en.Constraint(self.model.Time, rule=btm_net_connection_point_import)
         self.model.btm_net_export_constraint = en.Constraint(self.model.Time, rule=btm_net_connection_point_export)
 
+        self._apply_fcas_constraints()
+
+    def _apply_fcas_constraints(self):
+        #### Capacity Availability ####
+        
+        if OptimiserObjective.CapacityAvailability in self.objectives:  # We can always incorporate these but not optimiser for them.
+            # Need to find the max of battery capacity / max power versus set point
+            self.model.fcas_storage_discharge_power_is_max = en.Var(self.model.Time, within=en.Boolean, initialize=0)
+            self.model.fcas_storage_charge_power_is_max = en.Var(self.model.Time, within=en.Boolean, initialize=0)
+            self.model.fcas_discharge_power = en.Var(self.model.Time, initialize=0, bounds=(None, 0))#, domain=en.Integers)
+            self.model.fcas_charge_power = en.Var(self.model.Time, initialize=0)#, domain=en.Integers)
+
+            def fcas_max_power_raise_rule_one(model, time_interval):
+                # Keep the fcas power below the maximum available power
+                return model.fcas_discharge_power[time_interval] >= (
+                    self.energy_system.energy_storage.discharging_power_limit -
+                        (
+                            model.storage_charge_total[time_interval] / model.eta_chg 
+                            + model.storage_discharge_total[time_interval] * model.eta_dischg
+                        ) * minutes_per_hour / self.interval_duration
+                    )
+
+            def fcas_max_power_raise_rule_two(model, time_interval):
+                # Keep the fcas power below that which can be supplied by the available energy storage
+                # This needs to account for the ability of the response to stop charging (which requires no energy)
+                allocated_energy = (
+                    model.storage_charge_total[time_interval] / model.eta_chg 
+                    + model.storage_discharge_total[time_interval] * model.eta_dischg
+                ) * minutes_per_hour / self.interval_duration
+                fcas_energy_required_per_bid_unit = (fcas_total_duration / minutes_per_hour) / self.model.eta_dischg
+                return model.fcas_discharge_power[time_interval] >= (
+                        -self.model.storage_state_of_charge[time_interval] / (fcas_energy_required_per_bid_unit)
+                        -allocated_energy
+                        # / (fcas_total_duration / minutes_per_hour) - allocated_energy
+                    )
+
+            def fcas_max_power_raise_rule_three(model, time_interval):
+                return model.fcas_discharge_power[time_interval] <= self.energy_system.energy_storage.discharging_power_limit - (model.storage_charge_total[time_interval] + model.storage_discharge_total[time_interval]) + self.bigM * (1 - self.model.fcas_storage_discharge_power_is_max[time_interval])
+
+            def fcas_max_power_raise_rule_four(model, time_interval):
+                return model.fcas_discharge_power[time_interval] <= -self.model.storage_state_of_charge[time_interval] * self.model.eta_dischg / (fcas_total_duration / minutes_per_hour) + self.bigM * self.model.fcas_storage_discharge_power_is_max[time_interval]
+
+            def fcas_max_power_raise_export_limit(model, time_interval):
+                # Ensure that the capacity allocated to FCAS won't exceed the site export limit
+                power_conversion = minutes_per_hour / self.interval_duration
+
+                excess_charge_power = (self.model.system_generation[time_interval] + model.storage_charge_total[time_interval] + model.storage_discharge_total[time_interval]) * power_conversion
+                return -model.fcas_discharge_power[time_interval] - excess_charge_power <= self.model.export_limit
+                
+
+            self.model.fcas_max_power_raise_rule_one_constraint = en.Constraint(self.model.Time,
+                                                                                rule=fcas_max_power_raise_rule_one)
+            self.model.fcas_max_power_raise_rule_two_constraint = en.Constraint(self.model.Time,
+                                                                                rule=fcas_max_power_raise_rule_two)
+            # self.model.fcas_max_power_raise_rule_three_constraint = en.Constraint(self.model.Time,
+            #                                                                     rule=fcas_max_power_raise_rule_three)
+            # self.model.fcas_max_power_raise_rule_four_constraint = en.Constraint(self.model.Time,
+            #                                                                     rule=fcas_max_power_raise_rule_four)
+            
+            
+            # TODO Probably a better way of doing this
+            if self.energy_system.export_limit is not None:
+                self.model.fcas_max_power_raise_export_limit_rule = en.Constraint(
+                    self.model.Time,
+                    rule=fcas_max_power_raise_export_limit
+                )
+
+            def fcas_max_power_lower_rule_one(model, time_interval):
+                # Keep the fcas power below the maximum available power
+                
+                return model.fcas_charge_power[time_interval] <= (
+                    self.energy_system.energy_storage.charging_power_limit - 
+                        (
+                            model.storage_charge_total[time_interval] / model.eta_chg 
+                            + model.storage_discharge_total[time_interval] * model.eta_dischg
+                        ) * minutes_per_hour / self.interval_duration
+                    )
+
+            def fcas_max_power_lower_rule_two(model, time_interval):
+                # Keep the fcas power below that which can be supplied by the available energy storage
+                allocated_energy = (
+                    model.storage_charge_total[time_interval] / model.eta_chg 
+                    + model.storage_discharge_total[time_interval] * model.eta_dischg
+                ) * minutes_per_hour / self.interval_duration
+                return model.fcas_charge_power[time_interval] <= (
+                        self.energy_system.energy_storage.max_capacity - self.model.storage_state_of_charge[time_interval]
+                    ) / (self.model.eta_chg * fcas_total_duration / minutes_per_hour) + allocated_energy
+
+            def fcas_max_power_lower_rule_three(model, time_interval):
+                return model.fcas_charge_power[
+                           time_interval] >= self.energy_system.energy_storage.charging_power_limit - (
+                               model.storage_charge_total[time_interval] + model.storage_discharge_total[
+                           time_interval]) - self.bigM * (
+                               1 - self.model.fcas_storage_charge_power_is_max[time_interval])
+
+            def fcas_max_power_lower_rule_four(model, time_interval):
+                return model.fcas_charge_power[time_interval] >= (
+                        self.energy_system.energy_storage.max_capacity - self.model.storage_state_of_charge[
+                    time_interval]) / (self.model.eta_chg * fcas_total_duration / minutes_per_hour) - self.bigM * \
+                       self.model.fcas_storage_charge_power_is_max[time_interval]
+
+            self.model.fcas_max_power_lower_rule_one_constraint = en.Constraint(self.model.Time,
+                                                                                rule=fcas_max_power_lower_rule_one)
+            self.model.fcas_max_power_lower_rule_two_constraint = en.Constraint(self.model.Time,
+                                                                                rule=fcas_max_power_lower_rule_two)
+            # self.model.fcas_max_power_lower_rule_three_constraint = en.Constraint(self.model.Time,
+            #                                                                       rule=fcas_max_power_lower_rule_three)
+            # self.model.fcas_max_power_lower_rule_four_constraint = en.Constraint(self.model.Time,
+            #       
+
+
     def update_build_objective(self):
         # Build the objective function ready for optimisation
 
@@ -519,6 +641,17 @@ class BTMEnergyOptimiser(EnergyOptimiser):
             self.objective += sum(self.model.btm_net_export[i] * self.model.btm_net_export[i] +
                              self.model.btm_net_import[i] * self.model.btm_net_import[i]
                              for i in self.model.Time)
+
+        if OptimiserObjective.CapacityAvailability in self.objectives:
+            # Implement FCAS style objectives
+
+            # Raise value
+            self.objective += sum(self.model.fcas_discharge_power[i] * self.energy_system.capacity_prices.discharge_prices[i] for i in self.model.Time)
+
+            # Lower value
+            self.objective += sum(-self.model.fcas_charge_power[i] * self.energy_system.capacity_prices.charge_prices[i] for i in self.model.Time)
+
+
 
         '''if OptimiserObjective.PiecewiseLinear in self.objectives: # ToDo - Fix this implementation to make it complete
             for i in self.energy_system.dispatch.linear_ramp[0]:
@@ -767,6 +900,7 @@ class LocalEnergyOptimiser(EnergyOptimiser):
             self.model.ie_one = en.Constraint(self.model.Time, rule=import_export_rule_one)
             self.model.ie_two = en.Constraint(self.model.Time, rule=import_export_rule_two)
 
+        
 
     def update_build_objective(self):
         # Build the objective function ready for optimisation

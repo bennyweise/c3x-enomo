@@ -379,6 +379,39 @@ class LocalTariff:
 
 
 @dataclass(config=DataClassConfig)
+class CapacityPrices:
+    """Capacity prices are paid to a system that is able to respond to events
+    with a given power over a given time. These are essentially modelled on
+    FCAS contingency markets (combined).
+
+    Optimisation assumes that the actual dispatch into a capacity market is negligible,
+    so the price per unit of energy delivered/received is ignored. Capacity is calculated
+    based on the delta between the current action and possible action
+
+    Attributes:
+        charge_prices: Price paid for availability to charge the system (or curtail export)
+        discharge_prices: Price paid for availability to discharge the system. Technically, 
+            could also entail artificially curtailing solar in order to be available for dispatch
+            (in reality this scenario is unlikely)
+        
+
+    Raises:
+        ValueError: On instantiation, a ValueError may be raised if prices passed into the
+            constructor are not of the appropriate form. 
+            Note: validation is only performed when tariffs are passed into the constructor.
+            Tariffs set by the `add_x_tariff` method will not be validated.
+    """
+    charge_prices: dict = None
+    discharge_prices: dict = None
+
+    def add_capacity_prices_charge(self, prices):
+        self.charge_prices = prices
+
+    def add_capacity_prices_discharge(self, prices):
+        self.discharge_prices = prices
+
+
+@dataclass(config=DataClassConfig)
 class DispatchRequest:
     """
     A request for a system to dispatch across a set of intervals
@@ -422,6 +455,7 @@ class EnergySystem:
     dispatch: DispatchRequest = None
     demand: Demand = None
     generation: Generation = None
+    capacity_prices: CapacityPrices = None
 
     def add_energy_storage(self, energy_storage):
         self.energy_storage = energy_storage
@@ -443,3 +477,6 @@ class EnergySystem:
 
     def add_dispatch(self, dispatch):
         self.dispatch = dispatch
+
+    def add_capacity_prices(self, capacity_prices):
+        self.capacity_prices = capacity_prices

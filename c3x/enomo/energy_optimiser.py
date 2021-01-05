@@ -37,7 +37,8 @@ class OptimiserObjectiveSet(object):
     FinancialOptimisation = [OptimiserObjective.ConnectionPointCost,
                              #OptimiserObjective.GreedyGenerationCharging,
                              OptimiserObjective.ThroughputCost,
-                             OptimiserObjective.EqualStorageActions]
+                             OptimiserObjective.EqualStorageActions
+                             ]
 
     FCASOptimisation = FinancialOptimisation + [OptimiserObjective.CapacityAvailability]                             
 

@@ -37,7 +37,7 @@ def test_system_charges_to_bid_into_fcas_raise():
     )
 
     optimiser = BTMEnergyOptimiser(
-        30, N_INTERVALS, energy_system, [OptimiserObjective.CapacityAvailability] ,
+        30, N_INTERVALS, energy_system, OptimiserObjectiveSet.FCASOptimisation,
     )
     df = optimiser.result_df()
 
@@ -52,21 +52,10 @@ def test_system_charges_to_bid_into_fcas_raise():
 def test_solar_curtailment_to_meet_fcas_raise_bid():
     pass
 
-# @pytest.mark.skip("Currently some sub-optimal behaviour when bidding at an export limit")
-def test_fcas_raise_bids_respect_export_limit():
+@pytest.mark.parametrize("export_limit", (1.0, 2.0, 2.3, 2.4, 2.5, 3.0, 4.0))
+def test_fcas_raise_bids_respect_export_limit(export_limit):
     """
     Test that, if a site export limit is in place, this also limits the amount bid into FCAS raise
-
-    TODO When the export limit is near, at or beyond the point of limiting any bidding behaviour, the
-    initial charge period to enable bidding is smeared across the first few intervals. The
-    behaviour is close to correct, except for this behaviour. E.g. the correct result would
-    be to charge at [0.33, 0.0, ...] but the system charges at
-    [0.28, 0.05, ...].
-
-    This may be an artifact of how the optimiser approaches the bounds of a variable, which 
-    is how the export limit is set. Potentially need to experiment with a different method
-    of enforcing the export limit. (It may also just be a problem with the FCAS constraints,
-    they have not been well tested by any stretch)
     """
     n_intervals = 5
     battery = EnergyStorage(
@@ -86,7 +75,6 @@ def test_fcas_raise_bids_respect_export_limit():
         charge_prices=dict(enumerate([0.0] * n_intervals)),
         discharge_prices=dict(enumerate([1.0] * n_intervals)),
     )
-    export_limit = 2.0
     energy_system = EnergySystem(energy_storage=battery, 
         export_limit=export_limit,
         tariff=tariff,

@@ -32,6 +32,7 @@ class OptimiserObjective(object):
     LocalGridPeakPower = 14
 
     CapacityAvailability = 15
+    DemandCharges = 16
     
 class OptimiserObjectiveSet(object):
     FinancialOptimisation = [OptimiserObjective.ConnectionPointCost,
@@ -53,6 +54,8 @@ class OptimiserObjectiveSet(object):
     QuantisedPeakOptimisation = [OptimiserObjective.ConnectionPointQuantisedPeak]
 
     DispatchOptimisation = [OptimiserObjective.PiecewiseLinear] + FinancialOptimisation
+
+    DemandChargeOptimisation = FinancialOptimisation + [OptimiserObjective.DemandCharges]
 
     LocalModels = [OptimiserObjective.LocalModelsCost, 
                    OptimiserObjective.ThroughputCost,
@@ -323,7 +326,7 @@ class EnergyOptimiser(object):
             opt = SolverFactory(self.optimiser_engine)
 
         # Solve the optimisation
-        opt.solve(self.model)
+        opt.solve(self.model, tee=False)
 
     def values(self, variable_name, decimal_places=3):
         output = np.zeros(self.number_of_intervals)
@@ -419,9 +422,33 @@ class BTMEnergyOptimiser(EnergyOptimiser):
             """
             return model.system_generation[interval] >= model.system_generation_max[interval]
         
-        self.model.system_generation_curtailment_constraint = en.Constraint(self.model.Time,
+        self.model.system_generation_curtailment_constraint = en.Constraint(
+            self.model.Time,
             rule=connection_point_export_curtailment
         )
+
+        if self.energy_system.demand_tariff is not None:
+            # We need this to provide an objective function calculation where there is a non-zero minimum demand charge
+            self.model.demand_periods_bool = en.Param(self.model.Time,
+                                                      initialize=self.energy_system.demand_tariff.active_periods)
+            self.model.excess_demand = en.Var(
+                within=en.NonNegativeReals,
+                bounds=(self.energy_system.demand_tariff.minimum_demand, None)
+            )
+            self.model.demand_charge = en.Param(initialize=self.energy_system.demand_tariff.cost)
+
+            def excess_demand(model, interval):
+                """
+                Constrain the excess demand variable to be calculated based on the net_import in demand periods
+                """
+                return model.excess_demand >= (
+                        self.model.btm_net_import[interval] * self.model.demand_periods_bool[interval]
+                )
+
+            self.model.excess_demand_constraint = en.Constraint(
+                self.model.Time,
+                rule=excess_demand
+            )
 
         #### Piecewise Linear Segments (To be fully implemented later) ####
         '''if self.use_piecewise_segments:
@@ -650,6 +677,9 @@ class BTMEnergyOptimiser(EnergyOptimiser):
 
             # Lower value
             self.objective += sum(-self.model.fcas_charge_power[i] * self.energy_system.capacity_prices.charge_prices[i] for i in self.model.Time)
+
+        if OptimiserObjective.DemandCharges in self.objectives:
+            self.objective += self.model.excess_demand * self.model.demand_charge
 
 
 

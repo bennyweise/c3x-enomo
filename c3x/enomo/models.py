@@ -295,6 +295,25 @@ class Tariff:
 
 
 @dataclass(config=DataClassConfig)
+class DemandTariff:
+
+    active_periods: dict = None
+    cost: float = 0.0
+    minimum_demand: float = 0.0
+
+    @validator("active_periods")
+    def _validate_active_periods(cls, v):
+        if v is None:  # Need to allow default None for backwards compatibility
+            return v
+        for key, value in v.items():
+            if not isinstance(key, int):
+                raise ValueError("Tariff keys must be integers")
+            if not isinstance(value, int):
+                raise ValueError("Tariff values must be 0 or 1")
+        return v
+
+
+@dataclass(config=DataClassConfig)
 class LocalTariff:
     """LocalTariff objects differentiate between the energy and transport tariffs applied to 
     energy generated and consumed locally with energy imported and exported from the remote grid.
@@ -444,6 +463,7 @@ class EnergySystem:
         generation: An instance of a `Generation` system
         is_hybrid: Whether the inverter/generation/storage system is configured in a hybrid setup
         export_limit: Power limit on export. Defaults to None
+        demand_tariff: demand tariff to be applied to power (Va) imported,
     """
 
     energy_storage: EnergyStorage = None
@@ -456,6 +476,7 @@ class EnergySystem:
     demand: Demand = None
     generation: Generation = None
     capacity_prices: CapacityPrices = None
+    demand_tariff: DemandTariff = None
 
     def add_energy_storage(self, energy_storage):
         self.energy_storage = energy_storage
